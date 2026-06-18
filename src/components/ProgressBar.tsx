@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { Progress } from "@/components/ui/progress";
 
 interface ProgressBarProps {
   overPct: number;
@@ -19,16 +20,11 @@ export function ProgressBar({ overPct, underPct, className }: ProgressBarProps) 
         <span className="text-primary">{Math.round(overWidth)}% OVER</span>
         <span className="text-muted-foreground">{Math.round(underWidth)}% UNDER</span>
       </div>
-      <div className="h-2 flex rounded-full overflow-hidden bg-muted">
-        <div 
-          className="h-full bg-primary transition-all duration-500" 
-          style={{ width: `${overWidth}%` }} 
-        />
-        <div 
-          className="h-full bg-foreground transition-all duration-500" 
-          style={{ width: `${underWidth}%` }} 
-        />
-      </div>
+      <Progress
+        value={overWidth}
+        aria-label={`${Math.round(overWidth)} percent over, ${Math.round(underWidth)} percent under`}
+        className="h-2.5 bg-muted"
+      />
     </div>
   );
 }

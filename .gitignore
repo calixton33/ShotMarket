@@ -26,6 +26,7 @@ pnpm-debug.log*
 
 # Local editor and OS files
 .DS_Store
+.Rhistory
 .idea/
 .vscode/
 

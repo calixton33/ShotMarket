@@ -28,8 +28,11 @@ export function MarketCard({ event, overPct = 50, underPct = 50 }: MarketCardPro
   }
 
   return (
-    <Link href={`/event/${event.id}`}>
-      <Card className="hover-elevate border-border hover:border-primary transition-colors cursor-pointer h-full flex flex-col bg-card">
+    <Link
+      href={`/event/${event.id}`}
+      className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <Card className="flex h-full cursor-pointer flex-col border-border bg-card transition-colors hover:border-primary/60">
         <CardHeader className="pb-2">
           <div className="flex justify-between items-start gap-4">
             <div>

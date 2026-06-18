@@ -1,10 +1,10 @@
 import { useGetDashboard } from "@workspace/api-client-react";
+import { GrandMarketCard } from "@/components/GrandMarketCard";
 import { MarketCard } from "@/components/MarketCard";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { ProgressBar } from "@/components/ProgressBar";
-import { Flame, Activity, Clock, CheckCircle2 } from "lucide-react";
+import { Activity, Clock, CheckCircle2, PlusCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Dashboard() {
@@ -27,44 +27,16 @@ export default function Dashboard() {
   const grandQuestion = `Will ${dashboard.settings.trackedPersonName} drink ${dashboard.settings.grandLine} shots of alcohol?`;
 
   return (
-    <div className="space-y-16 pb-12">
-      {/* Grand Market Hero Card */}
+    <div className="space-y-12 pb-12">
       <section>
-        <Link href="/grand">
-          <Card className="hover-elevate cursor-pointer border-primary bg-card overflow-hidden relative group">
-            <CardHeader>
-              <div className="flex items-center gap-2 mb-4 text-muted-foreground">
-                <Flame className="w-5 h-5" />
-                <span className="font-medium text-xs">Grand Total Market</span>
-              </div>
-              <CardTitle className="text-4xl md:text-6xl font-medium tracking-normal leading-none">
-                {grandQuestion}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col md:flex-row gap-8 items-start md:items-end mt-4">
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground mb-2">Current Count</div>
-                  <div className="text-6xl font-medium text-foreground leading-none">
-                    {dashboard.settings.cumulativeShots}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground mb-2">Grand Line</div>
-                  <div className="text-6xl font-medium text-muted-foreground leading-none">
-                    {dashboard.settings.grandLine}
-                  </div>
-                </div>
-                <div className="flex-1 w-full md:w-auto self-center pt-4 md:pt-0">
-                  <ProgressBar 
-                    overPct={dashboard.grandMarketSummary.overPct} 
-                    underPct={dashboard.grandMarketSummary.underPct} 
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
+        <GrandMarketCard
+          title={grandQuestion}
+          currentCount={dashboard.settings.cumulativeShots}
+          grandLine={dashboard.settings.grandLine}
+          overPercentage={dashboard.grandMarketSummary.overPct}
+          underPercentage={dashboard.grandMarketSummary.underPct}
+          href="/grand"
+        />
       </section>
 
       {/* Active Events */}
@@ -113,10 +85,22 @@ export default function Dashboard() {
       )}
       
       {dashboard.activeEvents.length === 0 && dashboard.pendingEvents.length === 0 && (
-        <div className="text-center py-24 bg-card/30 rounded-xl border border-border border-dashed">
-          <h3 className="text-xl font-medium text-muted-foreground">No active sessions</h3>
-          <p className="text-muted-foreground mt-2">Waiting for the admin to open a new market.</p>
-        </div>
+        <Card className="border-dashed bg-card/60">
+          <CardContent className="flex flex-col items-center justify-center px-6 py-16 text-center">
+            <div className="mb-4 rounded-full border border-border bg-background p-3 text-muted-foreground">
+              <PlusCircle className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <h2 className="text-xl font-semibold text-foreground">
+              No active sessions
+            </h2>
+            <p className="mt-2 max-w-md text-sm text-muted-foreground">
+              Waiting for the admin to open a new market.
+            </p>
+            <Button asChild className="mt-6">
+              <Link href="/admin">Open new market</Link>
+            </Button>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
