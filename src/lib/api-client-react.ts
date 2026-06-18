@@ -188,6 +188,18 @@ function resetPlayersAndPools(store: LocalStore) {
   resetGrandCount(store);
 }
 
+function resetPoolsAndBalances(store: LocalStore) {
+  for (const user of store.users) {
+    resetUserStats(user);
+  }
+
+  store.nextBetId = 1;
+  store.bets = [];
+  store.settings.grandStatus = "active";
+  delete store.settings.grandWinningSide;
+  resetGrandCount(store);
+}
+
 function migrateStore(store: LocalStore) {
   if (
     store.settings.trackedPersonName === "Alex" &&
@@ -818,6 +830,23 @@ export function useResetPlayersAndPools() {
       saveStore(store);
 
       return {
+        user: publicUser(requireCurrentUser(store)),
+      };
+    },
+  });
+}
+
+export function useResetPoolsAndBalances() {
+  return useMutation({
+    mutationFn: async () => {
+      const store = getStore();
+      requireAdmin(store);
+
+      resetPoolsAndBalances(store);
+      saveStore(store);
+
+      return {
+        users: store.users.map(publicUser),
         user: publicUser(requireCurrentUser(store)),
       };
     },

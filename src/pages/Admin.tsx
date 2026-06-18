@@ -17,6 +17,7 @@ import {
   usePromoteUser,
   useGetMe,
   useResetPlayersAndPools,
+  useResetPoolsAndBalances,
   getGetSettingsQueryKey,
   getGetMeQueryKey,
   getListEventsQueryKey,
@@ -33,7 +34,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, DollarSign, Eraser, Lock, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
+import { CheckCircle2, DollarSign, Eraser, Lock, RotateCcw, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/utils";
 
 const authSchema = z.object({ password: z.string().min(1, "Password required") });
@@ -73,6 +74,7 @@ export default function Admin() {
   const promoteUser = usePromoteUser();
   const giveUserMoney = useGiveUserMoney();
   const resetPlayersAndPools = useResetPlayersAndPools();
+  const resetPoolsAndBalances = useResetPoolsAndBalances();
 
   // Auto-authenticate if the user is a DB admin with admin mode active
   const isDbAdminInAdminMode = me?.isAdmin && me?.adminMode;
@@ -279,6 +281,25 @@ export default function Admin() {
       },
       onError: () => {
         toast({ title: "Failed to reset leaderboard", variant: "destructive" });
+      }
+    });
+  };
+
+  const onResetPoolsAndBalances = () => {
+    if (!confirm("Reset every player's balance to 100 SC and clear all betting pools? All player accounts will stay.")) return;
+
+    resetPoolsAndBalances.mutate(undefined, {
+      onSuccess: ({ user }) => {
+        toast({
+          title: "Pools and balances reset",
+          description: "All players remain, each with 100 SC.",
+        });
+        setGiveAmounts({});
+        queryClient.setQueryData(getGetMeQueryKey(), user);
+        refreshEventViews();
+      },
+      onError: () => {
+        toast({ title: "Failed to reset pools and balances", variant: "destructive" });
       }
     });
   };
@@ -490,17 +511,30 @@ export default function Admin() {
             <CardHeader>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>User Management</CardTitle>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  onClick={onResetPlayersAndPools}
-                  disabled={resetPlayersAndPools.isPending}
-                  className="gap-1"
-                >
-                  <Eraser className="w-3.5 h-3.5" />
-                  Reset Players & Pools
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={onResetPoolsAndBalances}
+                    disabled={resetPoolsAndBalances.isPending}
+                    className="gap-1"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Reset Balances & Pools
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onClick={onResetPlayersAndPools}
+                    disabled={resetPlayersAndPools.isPending}
+                    className="gap-1"
+                  >
+                    <Eraser className="w-3.5 h-3.5" />
+                    Delete Players & Pools
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
