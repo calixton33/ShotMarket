@@ -192,7 +192,7 @@ export default function Login() {
                   {loginMutation.isPending ? "Logging in…" : "Enter Market"}
                 </Button>
                 <p className="text-center text-xs text-muted-foreground">
-                  First time logging in? Your password will be set on first login.
+                  New here? Create an account first, then log in with that username.
                 </p>
               </form>
             </Form>

@@ -4,6 +4,7 @@ import {
   type QueryKey,
   type UseQueryOptions,
 } from "@tanstack/react-query";
+import { requireSupabaseConfigured, supabase } from "@/lib/supabase";
 
 export type MarketSide = "over" | "under";
 export type WinningSide = MarketSide | "push";
@@ -11,7 +12,7 @@ export type EventStatus = "active" | "pending" | "resolved";
 export type BetStatus = "open" | "won" | "lost" | "push";
 
 export interface User {
-  id: number;
+  id: string;
   username: string;
   balance: number;
   isAdmin: boolean;
@@ -20,10 +21,6 @@ export interface User {
   losses: number;
   totalBets: number;
   winRate: number;
-}
-
-interface StoreUser extends User {
-  password: string;
 }
 
 export interface Event {
@@ -38,7 +35,7 @@ export interface Event {
 
 export interface Bet {
   id: number;
-  userId: number;
+  userId: string;
   eventId?: number;
   market: "event" | "grand";
   side: MarketSide;
@@ -73,28 +70,67 @@ interface MarketSummary {
   underPct: number;
 }
 
-interface LocalStore {
-  currentUserId: number | null;
-  nextUserId: number;
-  nextEventId: number;
-  nextBetId: number;
-  settings: Settings;
-  users: StoreUser[];
-  events: Event[];
-  bets: Bet[];
-  shotHistory: Array<{ date: string; cumulativeTotal: number }>;
-}
-
-type LocalQueryOptions<T> = {
+type SupabaseQueryOptions<T> = {
   query?: Omit<UseQueryOptions<T, Error, T, QueryKey>, "queryKey" | "queryFn"> & {
     queryKey?: QueryKey;
   };
 };
 
-const STORAGE_KEY = "shotmarket.local.v1";
+type ProfileRow = {
+  id: string;
+  username: string;
+  balance: number | string;
+  is_admin: boolean;
+  admin_mode: boolean;
+  wins: number;
+  losses: number;
+  total_bets: number;
+  win_rate: number;
+};
+
+type EventRow = {
+  id: number | string;
+  title: string;
+  event_date: string;
+  line: number | string;
+  status: EventStatus;
+  actual_shots: number | string | null;
+  winning_side: WinningSide | null;
+};
+
+type BetRow = {
+  id: number | string;
+  user_id: string;
+  event_id: number | string | null;
+  market: "event" | "grand";
+  side: MarketSide;
+  stake: number | string;
+  status: BetStatus;
+  payout: number | string;
+  created_at: string;
+};
+
+type SettingsRow = {
+  tracked_person_name: string;
+  grand_line: number | string;
+  grand_start_date: string;
+  grand_end_date: string;
+  cumulative_shots: number | string;
+  grand_status: "active" | "resolved";
+  grand_winning_side: WinningSide | null;
+};
+
+type ShotHistoryRow = {
+  shot_date: string;
+  cumulative_total: number | string;
+};
+
 const DEFAULT_TRACKED_PERSON_NAME = "Jia Xuan";
 const DEFAULT_GRAND_LINE = 100;
 const DEFAULT_STARTING_BALANCE = 100;
+const AUTH_EMAIL_DOMAIN = "shotmarket.local";
+const PROFILE_COLUMNS =
+  "id, username, balance, is_admin, admin_mode, wins, losses, total_bets, win_rate";
 
 export const getGetMeQueryKey = () => ["me"] as const;
 export const getGetDashboardQueryKey = () => ["dashboard"] as const;
@@ -105,197 +141,102 @@ export const getGetSettingsQueryKey = () => ["settings"] as const;
 export const getListEventsQueryKey = () => ["events"] as const;
 export const getListUsersQueryKey = () => ["users"] as const;
 
-function isoDate(year: number, month: number, day: number) {
-  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0)).toISOString();
-}
-
-function seedStore(): LocalStore {
-  return {
-    currentUserId: null,
-    nextUserId: 2,
-    nextEventId: 1,
-    nextBetId: 1,
-    settings: {
-      trackedPersonName: DEFAULT_TRACKED_PERSON_NAME,
-      grandLine: DEFAULT_GRAND_LINE,
-      grandStartDate: isoDate(2026, 6, 1),
-      grandEndDate: isoDate(2026, 8, 31),
-      cumulativeShots: 0,
-      grandStatus: "active",
-    },
-    users: [
-      {
-        id: 1,
-        username: "admin",
-        password: "admin",
-        balance: DEFAULT_STARTING_BALANCE,
-        isAdmin: true,
-        adminMode: true,
-        wins: 0,
-        losses: 0,
-        totalBets: 0,
-        winRate: 0,
-      },
-    ],
-    events: [],
-    bets: [],
-    shotHistory: [
-      { date: isoDate(2026, 6, 1), cumulativeTotal: 0 },
-    ],
-  };
-}
-
-function resetGrandCount(store: LocalStore) {
-  store.settings.cumulativeShots = 0;
-  store.shotHistory = [
-    {
-      date: store.settings.grandStartDate,
-      cumulativeTotal: 0,
-    },
-  ];
-}
-
-function resetUserStats(user: StoreUser) {
-  user.balance = DEFAULT_STARTING_BALANCE;
-  user.adminMode = user.isAdmin;
-  user.wins = 0;
-  user.losses = 0;
-  user.totalBets = 0;
-  user.winRate = 0;
-}
-
-function resetPlayersAndPools(store: LocalStore) {
-  const currentUser = store.users.find(
-    (candidate) => candidate.id === store.currentUserId,
-  );
-  const fallbackAdmin = store.users.find((candidate) => candidate.isAdmin);
-  const keptUser = currentUser?.isAdmin ? currentUser : fallbackAdmin ?? seedStore().users[0];
-
-  keptUser.isAdmin = true;
-  resetUserStats(keptUser);
-
-  store.currentUserId = keptUser.id;
-  store.users = [keptUser];
-  store.nextUserId = Math.max(keptUser.id + 1, 2);
-  store.nextEventId = 1;
-  store.nextBetId = 1;
-  store.events = [];
-  store.bets = [];
-  store.settings.trackedPersonName = DEFAULT_TRACKED_PERSON_NAME;
-  store.settings.grandLine = DEFAULT_GRAND_LINE;
-  store.settings.grandStatus = "active";
-  delete store.settings.grandWinningSide;
-  resetGrandCount(store);
-}
-
-function resetPoolsAndBalances(store: LocalStore) {
-  for (const user of store.users) {
-    resetUserStats(user);
-  }
-
-  store.nextBetId = 1;
-  store.bets = [];
-  store.settings.grandStatus = "active";
-  delete store.settings.grandWinningSide;
-  resetGrandCount(store);
-}
-
-function migrateStore(store: LocalStore) {
+function getErrorMessage(error: unknown, fallback = "Something went wrong.") {
+  if (typeof error === "string") return error;
+  if (error instanceof Error && error.message) return error.message;
   if (
-    store.settings.trackedPersonName === "Alex" &&
-    store.settings.grandLine === 55.5
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
   ) {
-    store.settings.trackedPersonName = DEFAULT_TRACKED_PERSON_NAME;
-    store.settings.grandLine = DEFAULT_GRAND_LINE;
+    return error.message;
   }
-
-  if (store.events.length === 0 && store.settings.cumulativeShots !== 0) {
-    resetGrandCount(store);
-  }
-
-  return store;
+  return fallback;
 }
 
-function getStore() {
-  if (typeof window === "undefined") return seedStore();
-
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    const seeded = seedStore();
-    saveStore(seeded);
-    return seeded;
-  }
-
-  try {
-    const store = migrateStore(JSON.parse(raw) as LocalStore);
-    saveStore(store);
-    return store;
-  } catch {
-    const seeded = seedStore();
-    saveStore(seeded);
-    return seeded;
-  }
+function appError(error: unknown, fallback?: string) {
+  const message = getErrorMessage(error, fallback);
+  return Object.assign(new Error(message), { error: message });
 }
 
-function saveStore(store: LocalStore) {
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
-  }
+function fail(error: unknown, fallback?: string): never {
+  throw appError(error, fallback);
 }
 
-function publicUser(user: StoreUser): User {
-  const total = user.wins + user.losses;
+function assertNoError(error: unknown, fallback?: string) {
+  if (error) fail(error, fallback);
+}
+
+function normalizeUsername(username: string) {
+  const normalized = username
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (!normalized) fail("Username is required.");
+  return normalized.slice(0, 32);
+}
+
+function getAuthEmail(username: string) {
+  return `${normalizeUsername(username)}@${AUTH_EMAIL_DOMAIN}`;
+}
+
+function toUser(row: ProfileRow): User {
   return {
-    id: user.id,
-    username: user.username,
-    balance: user.balance,
-    isAdmin: user.isAdmin,
-    adminMode: user.adminMode,
-    wins: user.wins,
-    losses: user.losses,
-    totalBets: user.totalBets,
-    winRate: total ? Math.round((user.wins / total) * 100) : 0,
+    id: row.id,
+    username: row.username,
+    balance: Number(row.balance),
+    isAdmin: row.is_admin,
+    adminMode: row.admin_mode,
+    wins: row.wins,
+    losses: row.losses,
+    totalBets: row.total_bets,
+    winRate: row.win_rate,
   };
 }
 
-function requireCurrentUser(store: LocalStore) {
-  const user = store.users.find((candidate) => candidate.id === store.currentUserId);
-  if (!user) throw new Error("Please log in first.");
-  return user;
+function toEvent(row: EventRow): Event {
+  return {
+    id: Number(row.id),
+    title: row.title,
+    eventDate: row.event_date,
+    line: Number(row.line),
+    status: row.status,
+    actualShots: row.actual_shots === null ? undefined : Number(row.actual_shots),
+    winningSide: row.winning_side ?? undefined,
+  };
 }
 
-function requireAdmin(store: LocalStore, requireAdminMode = true) {
-  const user = requireCurrentUser(store);
-  if (!user.isAdmin) throw new Error("Admin access required.");
-  if (requireAdminMode && !user.adminMode) {
-    throw new Error("Admin mode is required.");
-  }
-  return user;
+function toBet(row: BetRow): Bet {
+  return {
+    id: Number(row.id),
+    userId: row.user_id,
+    eventId: row.event_id === null ? undefined : Number(row.event_id),
+    market: row.market,
+    side: row.side,
+    stake: Number(row.stake),
+    status: row.status,
+    payout: Number(row.payout),
+    createdAt: row.created_at,
+  };
 }
 
-function requireMarketSide(side: MarketSide) {
-  if (side !== "over" && side !== "under") {
-    throw new Error("Invalid market side.");
-  }
+function toSettings(row: SettingsRow): Settings {
+  return {
+    trackedPersonName: row.tracked_person_name,
+    grandLine: Number(row.grand_line),
+    grandStartDate: row.grand_start_date,
+    grandEndDate: row.grand_end_date,
+    cumulativeShots: Number(row.cumulative_shots),
+    grandStatus: row.grand_status,
+    grandWinningSide: row.grand_winning_side ?? undefined,
+  };
 }
 
-function requirePositiveNumber(value: number, label: string) {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${label} must be greater than zero.`);
-  }
-}
-
-function requireNonNegativeNumber(value: number, label: string) {
-  if (!Number.isFinite(value) || value < 0) {
-    throw new Error(`${label} cannot be negative.`);
-  }
-}
-
-function requireValidDate(value: string, label: string) {
-  const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) {
-    throw new Error(`${label} must be a valid date.`);
-  }
+function sum(values: number[]) {
+  return values.reduce((total, value) => total + value, 0);
 }
 
 function getMarketSummary(bets: Bet[]) {
@@ -311,141 +252,340 @@ function getMarketSummary(bets: Bet[]) {
   };
 }
 
-function sum(values: number[]) {
-  return values.reduce((total, value) => total + value, 0);
-}
-
 function getWinningSide(actualShots: number, line: number): WinningSide {
   if (actualShots > line) return "over";
   if (actualShots < line) return "under";
   return "push";
 }
 
-function settleBets(store: LocalStore, bets: Bet[], winningSide: WinningSide) {
-  const totalPool = sum(bets.map((bet) => bet.stake));
-  const winningPool = sum(
-    bets.filter((bet) => bet.side === winningSide).map((bet) => bet.stake),
+function requireMarketSide(side: MarketSide) {
+  if (side !== "over" && side !== "under") {
+    fail("Invalid market side.");
+  }
+}
+
+function requirePositiveNumber(value: number, label: string) {
+  if (!Number.isFinite(value) || value <= 0) {
+    fail(`${label} must be greater than zero.`);
+  }
+}
+
+function requireNonNegativeNumber(value: number, label: string) {
+  if (!Number.isFinite(value) || value < 0) {
+    fail(`${label} cannot be negative.`);
+  }
+}
+
+function requireValidDate(value: string, label: string) {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) {
+    fail(`${label} must be a valid date.`);
+  }
+}
+
+async function getAuthUser() {
+  requireSupabaseConfigured();
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error && !error.message.toLowerCase().includes("auth session missing")) {
+    fail(error, "Could not read the current session.");
+  }
+
+  return data.user ?? null;
+}
+
+async function fetchCurrentProfile() {
+  const authUser = await getAuthUser();
+  if (!authUser) return null;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(PROFILE_COLUMNS)
+    .eq("id", authUser.id)
+    .maybeSingle();
+
+  assertNoError(error, "Could not load your profile.");
+  if (!data) fail("Profile not found. Try signing out and creating the account again.");
+
+  return data as ProfileRow;
+}
+
+async function requireCurrentProfile() {
+  const profile = await fetchCurrentProfile();
+  if (!profile) fail("Please log in first.");
+  return profile;
+}
+
+async function requireAdminProfile(requireAdminMode = true) {
+  const profile = await requireCurrentProfile();
+
+  if (!profile.is_admin) fail("Admin access required.");
+  if (requireAdminMode && !profile.admin_mode) {
+    fail("Admin mode is required.");
+  }
+
+  return profile;
+}
+
+async function fetchSettings() {
+  const { data, error } = await supabase
+    .from("market_settings")
+    .select("*")
+    .eq("id", 1)
+    .single();
+
+  assertNoError(error, "Could not load market settings.");
+  return toSettings(data as SettingsRow);
+}
+
+async function fetchEvents() {
+  const { data, error } = await supabase
+    .from("events")
+    .select("*")
+    .order("event_date", { ascending: false });
+
+  assertNoError(error, "Could not load events.");
+  return ((data ?? []) as EventRow[]).map(toEvent);
+}
+
+async function fetchBets(filters?: {
+  market?: "event" | "grand";
+  eventId?: number;
+  status?: BetStatus;
+}) {
+  let query = supabase.from("bets").select("*").order("created_at", { ascending: false });
+
+  if (filters?.market) query = query.eq("market", filters.market);
+  if (filters?.eventId !== undefined) query = query.eq("event_id", filters.eventId);
+  if (filters?.status) query = query.eq("status", filters.status);
+
+  const { data, error } = await query;
+  assertNoError(error, "Could not load bets.");
+  return ((data ?? []) as BetRow[]).map(toBet);
+}
+
+async function fetchProfiles() {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(PROFILE_COLUMNS)
+    .order("balance", { ascending: false });
+
+  assertNoError(error, "Could not load users.");
+  return ((data ?? []) as ProfileRow[]).map(toUser);
+}
+
+async function updateProfile(profileId: string, values: Partial<ProfileRow>) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .update(values)
+    .eq("id", profileId)
+    .select(PROFILE_COLUMNS)
+    .single();
+
+  assertNoError(error, "Could not update user.");
+  return data as ProfileRow;
+}
+
+async function resetGrandCount() {
+  const settings = await fetchSettings();
+
+  const { error: deleteHistoryError } = await supabase
+    .from("shot_history")
+    .delete()
+    .neq("id", -1);
+
+  assertNoError(deleteHistoryError, "Could not reset shot history.");
+
+  const { error: insertHistoryError } = await supabase
+    .from("shot_history")
+    .insert({ shot_date: settings.grandStartDate, cumulative_total: 0 });
+
+  assertNoError(insertHistoryError, "Could not reset shot history.");
+
+  const { error: settingsError } = await supabase
+    .from("market_settings")
+    .update({
+      cumulative_shots: 0,
+      grand_status: "active",
+      grand_winning_side: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", 1);
+
+  assertNoError(settingsError, "Could not reset market settings.");
+}
+
+async function resetGrandMarketDefaults() {
+  const { error } = await supabase
+    .from("market_settings")
+    .update({
+      tracked_person_name: DEFAULT_TRACKED_PERSON_NAME,
+      grand_line: DEFAULT_GRAND_LINE,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", 1);
+
+  assertNoError(error, "Could not reset market settings.");
+}
+
+async function settleBets(bets: Bet[], winningSide: WinningSide) {
+  const openBets = bets.filter((bet) => bet.status === "open");
+  if (openBets.length === 0) return;
+
+  const userIds = Array.from(new Set(openBets.map((bet) => bet.userId)));
+  const { data: profileRows, error: profilesError } = await supabase
+    .from("profiles")
+    .select(PROFILE_COLUMNS)
+    .in("id", userIds);
+
+  assertNoError(profilesError, "Could not load bet users.");
+
+  const profilesById = new Map(
+    ((profileRows ?? []) as ProfileRow[]).map((profile) => [profile.id, profile]),
   );
 
-  for (const bet of bets) {
-    if (bet.status !== "open") continue;
+  const totalPool = sum(openBets.map((bet) => bet.stake));
+  const winningPool = sum(
+    openBets.filter((bet) => bet.side === winningSide).map((bet) => bet.stake),
+  );
 
-    const user = store.users.find((candidate) => candidate.id === bet.userId);
-    if (!user) continue;
+  for (const bet of openBets) {
+    const profile = profilesById.get(bet.userId);
+    if (!profile) continue;
 
     if (winningSide === "push") {
-      bet.status = "push";
-      bet.payout = bet.stake;
-      user.balance += bet.stake;
+      const payout = bet.stake;
+      const { error: betError } = await supabase
+        .from("bets")
+        .update({ status: "push", payout })
+        .eq("id", bet.id);
+
+      assertNoError(betError, "Could not settle bet.");
+      await updateProfile(profile.id, {
+        balance: Number(profile.balance) + payout,
+      } as Partial<ProfileRow>);
       continue;
     }
 
     if (bet.side === winningSide) {
-      bet.status = "won";
-      bet.payout = winningPool ? (bet.stake / winningPool) * totalPool : bet.stake;
-      user.balance += bet.payout;
-      user.wins += 1;
+      const payout = winningPool ? (bet.stake / winningPool) * totalPool : bet.stake;
+      const { error: betError } = await supabase
+        .from("bets")
+        .update({ status: "won", payout })
+        .eq("id", bet.id);
+
+      assertNoError(betError, "Could not settle bet.");
+      await updateProfile(profile.id, {
+        balance: Number(profile.balance) + payout,
+        wins: profile.wins + 1,
+      } as Partial<ProfileRow>);
     } else {
-      bet.status = "lost";
-      bet.payout = 0;
-      user.losses += 1;
+      const { error: betError } = await supabase
+        .from("bets")
+        .update({ status: "lost", payout: 0 })
+        .eq("id", bet.id);
+
+      assertNoError(betError, "Could not settle bet.");
+      await updateProfile(profile.id, {
+        losses: profile.losses + 1,
+      } as Partial<ProfileRow>);
     }
-
-    user.totalBets += 1;
   }
 }
 
-function refundOpenBets(store: LocalStore, bets: Bet[]) {
-  for (const bet of bets) {
-    if (bet.status !== "open") continue;
+async function refundOpenEventBets(eventId: number) {
+  const openBets = await fetchBets({ market: "event", eventId, status: "open" });
+  if (openBets.length === 0) return;
 
-    const user = store.users.find((candidate) => candidate.id === bet.userId);
-    if (!user) continue;
+  const userIds = Array.from(new Set(openBets.map((bet) => bet.userId)));
+  const { data: profileRows, error: profilesError } = await supabase
+    .from("profiles")
+    .select(PROFILE_COLUMNS)
+    .in("id", userIds);
 
-    user.balance += bet.stake;
-    bet.status = "push";
-    bet.payout = bet.stake;
-  }
-}
+  assertNoError(profilesError, "Could not load users for refunds.");
 
-function removeEventFromStore(store: LocalStore, event: Event) {
-  const eventBets = store.bets.filter(
-    (bet) => bet.market === "event" && bet.eventId === event.id,
-  );
-  refundOpenBets(store, eventBets);
-
-  store.events = store.events.filter((candidate) => candidate.id !== event.id);
-  store.bets = store.bets.filter(
-    (bet) => !(bet.market === "event" && bet.eventId === event.id),
+  const profilesById = new Map(
+    ((profileRows ?? []) as ProfileRow[]).map((profile) => [profile.id, profile]),
   );
 
-  if (event.status === "resolved" && event.actualShots) {
-    store.settings.cumulativeShots = Math.max(
-      0,
-      store.settings.cumulativeShots - event.actualShots,
-    );
-    store.shotHistory = store.shotHistory.filter(
-      (point) => point.date !== event.eventDate,
-    );
+  for (const bet of openBets) {
+    const profile = profilesById.get(bet.userId);
+    if (!profile) continue;
+
+    await updateProfile(profile.id, {
+      balance: Number(profile.balance) + bet.stake,
+    } as Partial<ProfileRow>);
   }
 }
 
-function useLocalQuery<T>(
+async function removeEvent(event: Event) {
+  await refundOpenEventBets(event.id);
+
+  const { error: deleteEventError } = await supabase
+    .from("events")
+    .delete()
+    .eq("id", event.id);
+
+  assertNoError(deleteEventError, "Could not delete event.");
+
+  if (event.status === "resolved" && event.actualShots !== undefined) {
+    const settings = await fetchSettings();
+    const { error: settingsError } = await supabase
+      .from("market_settings")
+      .update({
+        cumulative_shots: Math.max(0, settings.cumulativeShots - event.actualShots),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", 1);
+
+    assertNoError(settingsError, "Could not update shot count.");
+
+    const { error: historyError } = await supabase
+      .from("shot_history")
+      .delete()
+      .eq("shot_date", event.eventDate);
+
+    assertNoError(historyError, "Could not update shot history.");
+  }
+}
+
+function useSupabaseQuery<T>(
   queryKey: QueryKey,
-  queryFn: () => T,
-  options?: LocalQueryOptions<T>,
+  queryFn: () => Promise<T>,
+  options?: SupabaseQueryOptions<T>,
 ) {
   const queryOptions = options?.query;
 
   return useQuery<T, Error, T, QueryKey>({
     ...queryOptions,
     queryKey: queryOptions?.queryKey ?? queryKey,
-    queryFn: async () => queryFn(),
+    queryFn,
   });
 }
 
-export function useGetMe(options?: LocalQueryOptions<User | null>) {
-  return useLocalQuery(getGetMeQueryKey(), () => {
-    const store = getStore();
-    const user = store.users.find((candidate) => candidate.id === store.currentUserId);
-    return user ? publicUser(user) : null;
-  }, options);
+export function useGetMe(options?: SupabaseQueryOptions<User | null>) {
+  return useSupabaseQuery(
+    getGetMeQueryKey(),
+    async () => {
+      const profile = await fetchCurrentProfile();
+      return profile ? toUser(profile) : null;
+    },
+    options,
+  );
 }
 
 export function useLogin() {
   return useMutation({
     mutationFn: async ({ data }: { data: { username: string; password: string } }) => {
-      const username = data.username.trim();
-      if (!username) throw new Error("Username is required.");
+      const { error } = await supabase.auth.signInWithPassword({
+        email: getAuthEmail(data.username),
+        password: data.password,
+      });
 
-      const store = getStore();
-      let user = store.users.find(
-        (candidate) => candidate.username.toLowerCase() === username.toLowerCase(),
-      );
-
-      if (!user) {
-        user = {
-          id: store.nextUserId++,
-          username,
-          password: data.password,
-          balance: 100,
-          isAdmin: false,
-          adminMode: false,
-          wins: 0,
-          losses: 0,
-          totalBets: 0,
-          winRate: 0,
-        };
-        store.users.push(user);
-      }
-
-      if (user.password !== data.password) {
-        throw new Error("Invalid username or password.");
-      }
-
-      store.currentUserId = user.id;
-      saveStore(store);
-      return publicUser(user);
+      assertNoError(error, "Invalid username or password.");
+      const profile = await requireCurrentProfile();
+      return toUser(profile);
     },
   });
 }
@@ -453,33 +593,31 @@ export function useLogin() {
 export function useRegister() {
   return useMutation({
     mutationFn: async ({ data }: { data: { username: string; password: string } }) => {
-      const username = data.username.trim();
-      if (!username) throw new Error("Username is required.");
+      const username = normalizeUsername(data.username);
 
-      const store = getStore();
-      const existingUser = store.users.find(
-        (candidate) => candidate.username.toLowerCase() === username.toLowerCase(),
-      );
-
-      if (existingUser) throw new Error("That username is already taken.");
-
-      const user: StoreUser = {
-        id: store.nextUserId++,
-        username,
+      const { data: authData, error } = await supabase.auth.signUp({
+        email: `${username}@${AUTH_EMAIL_DOMAIN}`,
         password: data.password,
-        balance: 100,
-        isAdmin: false,
-        adminMode: false,
-        wins: 0,
-        losses: 0,
-        totalBets: 0,
-        winRate: 0,
-      };
+        options: {
+          data: { username },
+        },
+      });
 
-      store.users.push(user);
-      store.currentUserId = user.id;
-      saveStore(store);
-      return publicUser(user);
+      assertNoError(error, "Could not create account.");
+
+      if (!authData.session) {
+        fail(
+          "Account created, but Supabase email confirmation is enabled. Turn off email confirmation in Supabase Auth settings for this username-only app, then log in.",
+        );
+      }
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const profile = await fetchCurrentProfile();
+        if (profile) return toUser(profile);
+        await new Promise((resolve) => window.setTimeout(resolve, 200));
+      }
+
+      fail("Account created, but the profile was not ready yet. Try logging in.");
     },
   });
 }
@@ -487,9 +625,8 @@ export function useRegister() {
 export function useLogout() {
   return useMutation({
     mutationFn: async () => {
-      const store = getStore();
-      store.currentUserId = null;
-      saveStore(store);
+      const { error } = await supabase.auth.signOut();
+      assertNoError(error, "Could not log out.");
       return null;
     },
   });
@@ -498,68 +635,78 @@ export function useLogout() {
 export function useSetAdminMode() {
   return useMutation({
     mutationFn: async ({ data }: { data: { enabled: boolean } }) => {
-      const store = getStore();
-      const user = requireCurrentUser(store);
-      if (!user.isAdmin) throw new Error("Admin access required.");
+      const profile = await requireAdminProfile(false);
+      const updated = await updateProfile(profile.id, {
+        admin_mode: data.enabled,
+      } as Partial<ProfileRow>);
 
-      user.adminMode = data.enabled;
-      saveStore(store);
-      return publicUser(user);
+      return toUser(updated);
     },
   });
 }
 
-export function useGetDashboard(options?: LocalQueryOptions<Dashboard>) {
-  return useLocalQuery(getGetDashboardQueryKey(), () => {
-    const store = getStore();
-    const sortedEvents = [...store.events].sort(
-      (a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime(),
-    );
-    const grandBets = store.bets.filter((bet) => bet.market === "grand");
+export function useGetDashboard(options?: SupabaseQueryOptions<Dashboard>) {
+  return useSupabaseQuery(
+    getGetDashboardQueryKey(),
+    async () => {
+      const [settings, events, bets] = await Promise.all([
+        fetchSettings(),
+        fetchEvents(),
+        fetchBets({ market: "grand" }),
+      ]);
 
-    return {
-      settings: store.settings,
-      activeEvents: sortedEvents.filter((event) => event.status === "active"),
-      pendingEvents: sortedEvents.filter((event) => event.status === "pending"),
-      resolvedEvents: sortedEvents.filter((event) => event.status === "resolved"),
-      grandMarketSummary: getMarketSummary(grandBets),
-    };
-  }, options);
+      return {
+        settings,
+        activeEvents: events.filter((event) => event.status === "active"),
+        pendingEvents: events.filter((event) => event.status === "pending"),
+        resolvedEvents: events.filter((event) => event.status === "resolved"),
+        grandMarketSummary: getMarketSummary(bets),
+      };
+    },
+    options,
+  );
 }
 
-export function useGetLeaderboard(options?: LocalQueryOptions<User[]>) {
-  return useLocalQuery(getGetLeaderboardQueryKey(), () => {
-    const store = getStore();
-    return store.users
-      .map(publicUser)
-      .sort((a, b) => b.balance - a.balance);
-  }, options);
+export function useGetLeaderboard(options?: SupabaseQueryOptions<User[]>) {
+  return useSupabaseQuery(getGetLeaderboardQueryKey(), fetchProfiles, options);
 }
 
-export function useGetEvent(eventId: number, options?: LocalQueryOptions<{
-  event: Event;
-  overPool: number;
-  underPool: number;
-  overPct: number;
-  underPct: number;
-  userBets: Bet[];
-} | null>) {
-  return useLocalQuery(getGetEventQueryKey(eventId), () => {
-    const store = getStore();
-    const event = store.events.find((candidate) => candidate.id === eventId);
-    if (!event) return null;
+export function useGetEvent(
+  eventId: number,
+  options?: SupabaseQueryOptions<{
+    event: Event;
+    overPool: number;
+    underPool: number;
+    overPct: number;
+    underPct: number;
+    userBets: Bet[];
+  } | null>,
+) {
+  return useSupabaseQuery(
+    getGetEventQueryKey(eventId),
+    async () => {
+      const { data, error } = await supabase
+        .from("events")
+        .select("*")
+        .eq("id", eventId)
+        .maybeSingle();
 
-    const eventBets = store.bets.filter(
-      (bet) => bet.market === "event" && bet.eventId === eventId,
-    );
-    const currentUserId = store.currentUserId;
+      assertNoError(error, "Could not load event.");
+      if (!data) return null;
 
-    return {
-      event,
-      ...getMarketSummary(eventBets),
-      userBets: eventBets.filter((bet) => bet.userId === currentUserId),
-    };
-  }, options);
+      const [profile, eventBets] = await Promise.all([
+        fetchCurrentProfile(),
+        fetchBets({ market: "event", eventId }),
+      ]);
+
+      return {
+        event: toEvent(data as EventRow),
+        ...getMarketSummary(eventBets),
+        userBets: eventBets.filter((bet) => bet.userId === profile?.id),
+      };
+    },
+    options,
+  );
 }
 
 export function usePlaceBetOnEvent() {
@@ -571,86 +718,74 @@ export function usePlaceBetOnEvent() {
       eventId: number;
       data: { side: MarketSide; stake: number };
     }) => {
-      const store = getStore();
-      const user = requireCurrentUser(store);
-      const event = store.events.find((candidate) => candidate.id === eventId);
-
       requireMarketSide(data.side);
       requirePositiveNumber(data.stake, "Stake");
-      if (!event) throw new Error("Event not found.");
-      if (event.status !== "active") throw new Error("This market is closed.");
-      if (data.stake > user.balance) throw new Error("Insufficient balance.");
 
-      const bet: Bet = {
-        id: store.nextBetId++,
-        userId: user.id,
-        eventId,
-        market: "event",
-        side: data.side,
-        stake: data.stake,
-        status: "open",
-        payout: 0,
-        createdAt: new Date().toISOString(),
-      };
+      const { data: bet, error } = await supabase.rpc("place_bet", {
+        p_market: "event",
+        p_side: data.side,
+        p_stake: data.stake,
+        p_event_id: eventId,
+      });
 
-      user.balance -= data.stake;
-      store.bets.push(bet);
-      saveStore(store);
-      return bet;
+      assertNoError(error, "Could not place bet.");
+      return toBet(bet as BetRow);
     },
   });
 }
 
-export function useGetGrandMarket(options?: LocalQueryOptions<{
-  settings: Settings;
-  overPool: number;
-  underPool: number;
-  overPct: number;
-  underPct: number;
-  shotHistory: Array<{ date: string; cumulativeTotal: number }>;
-  userBets: Bet[];
-}>) {
-  return useLocalQuery(getGetGrandMarketQueryKey(), () => {
-    const store = getStore();
-    const grandBets = store.bets.filter((bet) => bet.market === "grand");
+export function useGetGrandMarket(
+  options?: SupabaseQueryOptions<{
+    settings: Settings;
+    overPool: number;
+    underPool: number;
+    overPct: number;
+    underPct: number;
+    shotHistory: Array<{ date: string; cumulativeTotal: number }>;
+    userBets: Bet[];
+  }>,
+) {
+  return useSupabaseQuery(
+    getGetGrandMarketQueryKey(),
+    async () => {
+      const [profile, settings, grandBets, historyResult] = await Promise.all([
+        fetchCurrentProfile(),
+        fetchSettings(),
+        fetchBets({ market: "grand" }),
+        supabase.from("shot_history").select("*").order("shot_date", { ascending: true }),
+      ]);
 
-    return {
-      settings: store.settings,
-      ...getMarketSummary(grandBets),
-      shotHistory: store.shotHistory,
-      userBets: grandBets.filter((bet) => bet.userId === store.currentUserId),
-    };
-  }, options);
+      assertNoError(historyResult.error, "Could not load shot history.");
+
+      return {
+        settings,
+        ...getMarketSummary(grandBets),
+        shotHistory: ((historyResult.data ?? []) as ShotHistoryRow[]).map((point) => ({
+          date: point.shot_date,
+          cumulativeTotal: Number(point.cumulative_total),
+        })),
+        userBets: grandBets.filter((bet) => bet.userId === profile?.id),
+      };
+    },
+    options,
+  );
 }
 
 export function usePlaceBetOnGrand() {
   return useMutation({
     mutationFn: async ({ data }: { data: { side: MarketSide; stake: number } }) => {
-      const store = getStore();
-      const user = requireCurrentUser(store);
-
       requireMarketSide(data.side);
       requirePositiveNumber(data.stake, "Stake");
-      if (store.settings.grandStatus !== "active") {
-        throw new Error("The grand market is already resolved.");
-      }
-      if (data.stake > user.balance) throw new Error("Insufficient balance.");
 
-      const bet: Bet = {
-        id: store.nextBetId++,
-        userId: user.id,
-        market: "grand",
-        side: data.side,
-        stake: data.stake,
-        status: "open",
-        payout: 0,
-        createdAt: new Date().toISOString(),
-      };
+      const { data: bet, error } = await supabase.rpc("place_bet", {
+        p_market: "grand",
+        p_side: data.side,
+        p_stake: data.stake,
+        p_event_id: null,
+      });
 
-      user.balance -= data.stake;
-      store.bets.push(bet);
-      saveStore(store);
-      return bet;
+      assertNoError(error, "Could not place bet.");
+      return toBet(bet as BetRow);
     },
   });
 }
@@ -658,29 +793,35 @@ export function usePlaceBetOnGrand() {
 export function useAdminLogin() {
   return useMutation({
     mutationFn: async ({ data }: { data: { password: string } }) => {
-      const store = getStore();
-      const user = requireAdmin(store, false);
-      if (user.password !== data.password) throw new Error("Invalid admin password.");
+      const profile = await requireAdminProfile(false);
 
-      user.adminMode = true;
-      saveStore(store);
-      return publicUser(user);
+      const { error } = await supabase.auth.signInWithPassword({
+        email: `${profile.username}@${AUTH_EMAIL_DOMAIN}`,
+        password: data.password,
+      });
+
+      assertNoError(error, "Invalid admin password.");
+
+      const updated = await updateProfile(profile.id, {
+        admin_mode: true,
+      } as Partial<ProfileRow>);
+
+      return toUser(updated);
     },
   });
 }
 
-export function useGetSettings(options?: LocalQueryOptions<Settings>) {
-  return useLocalQuery(getGetSettingsQueryKey(), () => getStore().settings, options);
+export function useGetSettings(options?: SupabaseQueryOptions<Settings>) {
+  return useSupabaseQuery(getGetSettingsQueryKey(), fetchSettings, options);
 }
 
 export function useUpdateSettings() {
   return useMutation({
     mutationFn: async ({ data }: { data: Partial<Settings> }) => {
-      const store = getStore();
-      requireAdmin(store);
+      await requireAdminProfile();
 
       if (data.trackedPersonName !== undefined && !data.trackedPersonName.trim()) {
-        throw new Error("Tracked person name is required.");
+        fail("Tracked person name is required.");
       }
       if (data.grandLine !== undefined) {
         requirePositiveNumber(data.grandLine, "Grand line");
@@ -695,18 +836,32 @@ export function useUpdateSettings() {
         requireValidDate(data.grandEndDate, "End date");
       }
 
-      store.settings = {
-        ...store.settings,
-        ...data,
-        grandStartDate: data.grandStartDate
-          ? new Date(data.grandStartDate).toISOString()
-          : store.settings.grandStartDate,
-        grandEndDate: data.grandEndDate
-          ? new Date(data.grandEndDate).toISOString()
-          : store.settings.grandEndDate,
+      const values = {
+        ...(data.trackedPersonName !== undefined
+          ? { tracked_person_name: data.trackedPersonName.trim() }
+          : {}),
+        ...(data.grandLine !== undefined ? { grand_line: data.grandLine } : {}),
+        ...(data.cumulativeShots !== undefined
+          ? { cumulative_shots: data.cumulativeShots }
+          : {}),
+        ...(data.grandStartDate
+          ? { grand_start_date: new Date(data.grandStartDate).toISOString() }
+          : {}),
+        ...(data.grandEndDate
+          ? { grand_end_date: new Date(data.grandEndDate).toISOString() }
+          : {}),
+        updated_at: new Date().toISOString(),
       };
-      saveStore(store);
-      return store.settings;
+
+      const { data: settings, error } = await supabase
+        .from("market_settings")
+        .update(values)
+        .eq("id", 1)
+        .select("*")
+        .single();
+
+      assertNoError(error, "Could not update settings.");
+      return toSettings(settings as SettingsRow);
     },
   });
 }
@@ -718,33 +873,31 @@ export function useCreateEvent() {
     }: {
       data: { title: string; eventDate: string; line: number };
     }) => {
-      const store = getStore();
-      requireAdmin(store);
-      if (!data.title.trim()) throw new Error("Event title is required.");
+      const profile = await requireAdminProfile();
+      if (!data.title.trim()) fail("Event title is required.");
       requirePositiveNumber(data.line, "Line");
       requireValidDate(data.eventDate, "Event date");
 
-      const event: Event = {
-        id: store.nextEventId++,
-        title: data.title.trim(),
-        eventDate: data.eventDate,
-        line: data.line,
-        status: "active",
-      };
+      const { data: event, error } = await supabase
+        .from("events")
+        .insert({
+          title: data.title.trim(),
+          event_date: data.eventDate,
+          line: data.line,
+          status: "active",
+          created_by: profile.id,
+        })
+        .select("*")
+        .single();
 
-      store.events.push(event);
-      saveStore(store);
-      return event;
+      assertNoError(error, "Could not create event.");
+      return toEvent(event as EventRow);
     },
   });
 }
 
-export function useListEvents(options?: LocalQueryOptions<Event[]>) {
-  return useLocalQuery(getListEventsQueryKey(), () => {
-    return [...getStore().events].sort(
-      (a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime(),
-    );
-  }, options);
+export function useListEvents(options?: SupabaseQueryOptions<Event[]>) {
+  return useSupabaseQuery(getListEventsQueryKey(), fetchEvents, options);
 }
 
 export function useResolveEvent() {
@@ -756,31 +909,56 @@ export function useResolveEvent() {
       eventId: number;
       data: { actualShots: number };
     }) => {
-      const store = getStore();
-      requireAdmin(store);
+      await requireAdminProfile();
       requireNonNegativeNumber(data.actualShots, "Actual shots");
 
-      const event = store.events.find((candidate) => candidate.id === eventId);
-      if (!event) throw new Error("Event not found.");
-      if (event.status === "resolved") throw new Error("Event is already resolved.");
+      const { data: eventRow, error: eventError } = await supabase
+        .from("events")
+        .select("*")
+        .eq("id", eventId)
+        .single();
+
+      assertNoError(eventError, "Event not found.");
+
+      const event = toEvent(eventRow as EventRow);
+      if (event.status === "resolved") fail("Event is already resolved.");
 
       const winningSide = getWinningSide(data.actualShots, event.line);
-      event.status = "resolved";
-      event.actualShots = data.actualShots;
-      event.winningSide = winningSide;
-      store.settings.cumulativeShots += data.actualShots;
-      store.shotHistory.push({
-        date: event.eventDate,
-        cumulativeTotal: store.settings.cumulativeShots,
+      const { data: updatedEvent, error: updateEventError } = await supabase
+        .from("events")
+        .update({
+          status: "resolved",
+          actual_shots: data.actualShots,
+          winning_side: winningSide,
+        })
+        .eq("id", eventId)
+        .select("*")
+        .single();
+
+      assertNoError(updateEventError, "Could not resolve event.");
+
+      const settings = await fetchSettings();
+      const nextTotal = settings.cumulativeShots + data.actualShots;
+
+      const { error: settingsError } = await supabase
+        .from("market_settings")
+        .update({
+          cumulative_shots: nextTotal,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", 1);
+
+      assertNoError(settingsError, "Could not update shot count.");
+
+      const { error: historyError } = await supabase.from("shot_history").insert({
+        shot_date: event.eventDate,
+        cumulative_total: nextTotal,
       });
 
-      settleBets(
-        store,
-        store.bets.filter((bet) => bet.market === "event" && bet.eventId === eventId),
-        winningSide,
-      );
-      saveStore(store);
-      return event;
+      assertNoError(historyError, "Could not update shot history.");
+
+      await settleBets(await fetchBets({ market: "event", eventId }), winningSide);
+      return toEvent(updatedEvent as EventRow);
     },
   });
 }
@@ -788,14 +966,17 @@ export function useResolveEvent() {
 export function useDeleteEvent() {
   return useMutation({
     mutationFn: async ({ eventId }: { eventId: number }) => {
-      const store = getStore();
-      requireAdmin(store);
+      await requireAdminProfile();
 
-      const event = store.events.find((candidate) => candidate.id === eventId);
-      if (!event) throw new Error("Event not found.");
+      const { data, error } = await supabase
+        .from("events")
+        .select("*")
+        .eq("id", eventId)
+        .single();
 
-      removeEventFromStore(store, event);
-      saveStore(store);
+      assertNoError(error, "Event not found.");
+      const event = toEvent(data as EventRow);
+      await removeEvent(event);
       return event;
     },
   });
@@ -804,18 +985,15 @@ export function useDeleteEvent() {
 export function useClearEvents() {
   return useMutation({
     mutationFn: async () => {
-      const store = getStore();
-      requireAdmin(store);
+      await requireAdminProfile();
+      const events = await fetchEvents();
 
-      const eventsToRemove = [...store.events];
-
-      for (const event of eventsToRemove) {
-        removeEventFromStore(store, event);
+      for (const event of events) {
+        await removeEvent(event);
       }
-      resetGrandCount(store);
 
-      saveStore(store);
-      return eventsToRemove;
+      await resetGrandCount();
+      return events;
     },
   });
 }
@@ -823,14 +1001,34 @@ export function useClearEvents() {
 export function useResetPlayersAndPools() {
   return useMutation({
     mutationFn: async () => {
-      const store = getStore();
-      requireAdmin(store);
+      const profile = await requireAdminProfile();
 
-      resetPlayersAndPools(store);
-      saveStore(store);
+      const { error: betsError } = await supabase.from("bets").delete().neq("id", -1);
+      assertNoError(betsError, "Could not clear bets.");
+
+      const { error: eventsError } = await supabase.from("events").delete().neq("id", -1);
+      assertNoError(eventsError, "Could not clear events.");
+
+      const { error: profilesError } = await supabase
+        .from("profiles")
+        .delete()
+        .neq("id", profile.id);
+
+      assertNoError(profilesError, "Could not delete players.");
+
+      const updated = await updateProfile(profile.id, {
+        balance: DEFAULT_STARTING_BALANCE,
+        is_admin: true,
+        admin_mode: true,
+        wins: 0,
+        losses: 0,
+      } as Partial<ProfileRow>);
+
+      await resetGrandCount();
+      await resetGrandMarketDefaults();
 
       return {
-        user: publicUser(requireCurrentUser(store)),
+        user: toUser(updated),
       };
     },
   });
@@ -839,15 +1037,28 @@ export function useResetPlayersAndPools() {
 export function useResetPoolsAndBalances() {
   return useMutation({
     mutationFn: async () => {
-      const store = getStore();
-      requireAdmin(store);
+      await requireAdminProfile();
 
-      resetPoolsAndBalances(store);
-      saveStore(store);
+      const users = await fetchProfiles();
+
+      const { error: betsError } = await supabase.from("bets").delete().neq("id", -1);
+      assertNoError(betsError, "Could not clear bets.");
+
+      for (const user of users) {
+        await updateProfile(user.id, {
+          balance: DEFAULT_STARTING_BALANCE,
+          admin_mode: user.isAdmin,
+          wins: 0,
+          losses: 0,
+        } as Partial<ProfileRow>);
+      }
+
+      await resetGrandCount();
+      const current = await requireCurrentProfile();
 
       return {
-        users: store.users.map(publicUser),
-        user: publicUser(requireCurrentUser(store)),
+        users: await fetchProfiles(),
+        user: toUser(current),
       };
     },
   });
@@ -856,36 +1067,41 @@ export function useResetPoolsAndBalances() {
 export function useResolveGrandMarket() {
   return useMutation({
     mutationFn: async () => {
-      const store = getStore();
-      requireAdmin(store);
+      await requireAdminProfile();
 
-      if (store.settings.grandStatus === "resolved") {
-        throw new Error("Grand market is already resolved.");
+      const settings = await fetchSettings();
+      if (settings.grandStatus === "resolved") {
+        fail("Grand market is already resolved.");
       }
 
-      const winningSide = getWinningSide(
-        store.settings.cumulativeShots,
-        store.settings.grandLine,
-      );
-      store.settings.grandStatus = "resolved";
-      store.settings.grandWinningSide = winningSide;
-      settleBets(
-        store,
-        store.bets.filter((bet) => bet.market === "grand"),
-        winningSide,
-      );
-      saveStore(store);
-      return store.settings;
+      const winningSide = getWinningSide(settings.cumulativeShots, settings.grandLine);
+      const { data, error } = await supabase
+        .from("market_settings")
+        .update({
+          grand_status: "resolved",
+          grand_winning_side: winningSide,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", 1)
+        .select("*")
+        .single();
+
+      assertNoError(error, "Could not resolve grand market.");
+      await settleBets(await fetchBets({ market: "grand" }), winningSide);
+      return toSettings(data as SettingsRow);
     },
   });
 }
 
-export function useListUsers(options?: LocalQueryOptions<User[]>) {
-  return useLocalQuery(getListUsersQueryKey(), () => {
-    const store = getStore();
-    requireAdmin(store);
-    return store.users.map(publicUser);
-  }, options);
+export function useListUsers(options?: SupabaseQueryOptions<User[]>) {
+  return useSupabaseQuery(
+    getListUsersQueryKey(),
+    async () => {
+      await requireAdminProfile();
+      return fetchProfiles();
+    },
+    options,
+  );
 }
 
 export function usePromoteUser() {
@@ -894,19 +1110,17 @@ export function usePromoteUser() {
       userId,
       data,
     }: {
-      userId: number;
+      userId: string;
       data: { isAdmin: boolean };
     }) => {
-      const store = getStore();
-      requireAdmin(store);
+      await requireAdminProfile();
 
-      const user = store.users.find((candidate) => candidate.id === userId);
-      if (!user) throw new Error("User not found.");
+      const updated = await updateProfile(userId, {
+        is_admin: data.isAdmin,
+        admin_mode: data.isAdmin,
+      } as Partial<ProfileRow>);
 
-      user.isAdmin = data.isAdmin;
-      if (!user.isAdmin) user.adminMode = false;
-      saveStore(store);
-      return publicUser(user);
+      return toUser(updated);
     },
   });
 }
@@ -917,19 +1131,25 @@ export function useGiveUserMoney() {
       userId,
       data,
     }: {
-      userId: number;
+      userId: string;
       data: { amount: number };
     }) => {
-      const store = getStore();
-      requireAdmin(store);
+      await requireAdminProfile();
       requirePositiveNumber(data.amount, "Amount");
 
-      const user = store.users.find((candidate) => candidate.id === userId);
-      if (!user) throw new Error("User not found.");
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select(PROFILE_COLUMNS)
+        .eq("id", userId)
+        .single();
 
-      user.balance += data.amount;
-      saveStore(store);
-      return publicUser(user);
+      assertNoError(error, "User not found.");
+
+      const updated = await updateProfile(userId, {
+        balance: Number((profile as ProfileRow).balance) + data.amount,
+      } as Partial<ProfileRow>);
+
+      return toUser(updated);
     },
   });
 }

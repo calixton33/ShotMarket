@@ -61,7 +61,7 @@ export default function Admin() {
   const { toast } = useToast();
   const [isAuthenticated, setIsAuth] = useState(false);
   const [resolvingId, setResolvingId] = useState<number | null>(null);
-  const [giveAmounts, setGiveAmounts] = useState<Record<number, string>>({});
+  const [giveAmounts, setGiveAmounts] = useState<Record<string, string>>({});
 
   const { data: me } = useGetMe();
   const adminLogin = useAdminLogin();
@@ -247,7 +247,7 @@ export default function Admin() {
     });
   };
 
-  const onToggleAdmin = (userId: number, currentIsAdmin: boolean) => {
+  const onToggleAdmin = (userId: string, currentIsAdmin: boolean) => {
     promoteUser.mutate(
       { userId, data: { isAdmin: !currentIsAdmin } },
       {
@@ -304,7 +304,7 @@ export default function Admin() {
     });
   };
 
-  const onGiveMoney = (userId: number, username: string) => {
+  const onGiveMoney = (userId: string, username: string) => {
     const amount = Number(giveAmounts[userId]);
 
     if (!Number.isFinite(amount) || amount <= 0) {
