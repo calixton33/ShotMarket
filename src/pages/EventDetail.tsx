@@ -70,7 +70,12 @@ export default function EventDetail() {
     <div className="max-w-3xl mx-auto space-y-8 pb-12">
       <div className="flex flex-col gap-4">
         <div className="flex justify-between items-start">
-          <Badge variant={badgeVariant} className="uppercase font-bold px-3 py-1">{statusText}</Badge>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant={badgeVariant} className="uppercase font-bold px-3 py-1">{statusText}</Badge>
+            <Badge variant={event.countsTowardGrand ? "secondary" : "outline"} className="uppercase font-bold px-3 py-1">
+              {event.countsTowardGrand ? "Grand total" : "Side market"}
+            </Badge>
+          </div>
           <div className="text-sm font-mono text-muted-foreground">{formatDate(event.eventDate)}</div>
         </div>
         <h1 className="text-4xl md:text-5xl font-medium tracking-normal">{event.title}</h1>

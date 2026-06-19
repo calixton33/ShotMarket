@@ -24,7 +24,7 @@ export default function Dashboard() {
 
   if (!dashboard) return null;
 
-  const grandQuestion = `Will ${dashboard.settings.trackedPersonName} drink ${dashboard.settings.grandLine} shots of alcohol?`;
+  const grandQuestion = dashboard.settings.grandMarketTitle;
 
   return (
     <div className="space-y-12 pb-12">

@@ -43,7 +43,7 @@ export default function GrandMarket() {
   }
 
   const { settings, overPool, underPool, overPct, underPct, shotHistory, userBets } = market;
-  const grandQuestion = `Will ${settings.trackedPersonName} drink ${settings.grandLine} shots of alcohol?`;
+  const grandQuestion = settings.grandMarketTitle;
 
   const chartData = shotHistory.map(pt => ({
     date: new Date(pt.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),

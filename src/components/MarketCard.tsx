@@ -37,7 +37,11 @@ export function MarketCard({ event, overPct = 50, underPct = 50 }: MarketCardPro
           <div className="flex justify-between items-start gap-4">
             <div>
               <CardTitle className="text-lg leading-tight font-medium">{event.title}</CardTitle>
-              <div className="text-xs text-muted-foreground mt-1">{formatDate(event.eventDate)}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span>{formatDate(event.eventDate)}</span>
+                <span>•</span>
+                <span>{event.countsTowardGrand ? "Grand total" : "Side market"}</span>
+              </div>
             </div>
             <Badge variant={badgeVariant} className="uppercase font-bold shrink-0">{statusText}</Badge>
           </div>

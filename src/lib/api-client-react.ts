@@ -29,6 +29,7 @@ export interface Event {
   eventDate: string;
   line: number;
   status: EventStatus;
+  countsTowardGrand: boolean;
   actualShots?: number;
   winningSide?: WinningSide;
 }
@@ -46,6 +47,7 @@ export interface Bet {
 }
 
 export interface Settings {
+  grandMarketTitle: string;
   trackedPersonName: string;
   grandLine: number;
   grandStartDate: string;
@@ -94,6 +96,7 @@ type EventRow = {
   event_date: string;
   line: number | string;
   status: EventStatus;
+  counts_toward_grand: boolean | null;
   actual_shots: number | string | null;
   winning_side: WinningSide | null;
 };
@@ -111,6 +114,7 @@ type BetRow = {
 };
 
 type SettingsRow = {
+  grand_market_title: string | null;
   tracked_person_name: string;
   grand_line: number | string;
   grand_start_date: string;
@@ -127,6 +131,7 @@ type ShotHistoryRow = {
 
 const DEFAULT_TRACKED_PERSON_NAME = "Jia Xuan";
 const DEFAULT_GRAND_LINE = 100;
+const DEFAULT_GRAND_MARKET_TITLE = "Will Jia Xuan drink 100 shots of alcohol?";
 const DEFAULT_STARTING_BALANCE = 100;
 const AUTH_EMAIL_DOMAIN = "shotmarket.local";
 const PROFILE_COLUMNS =
@@ -204,6 +209,7 @@ function toEvent(row: EventRow): Event {
     eventDate: row.event_date,
     line: Number(row.line),
     status: row.status,
+    countsTowardGrand: row.counts_toward_grand ?? true,
     actualShots: row.actual_shots === null ? undefined : Number(row.actual_shots),
     winningSide: row.winning_side ?? undefined,
   };
@@ -225,6 +231,9 @@ function toBet(row: BetRow): Bet {
 
 function toSettings(row: SettingsRow): Settings {
   return {
+    grandMarketTitle:
+      row.grand_market_title?.trim() ||
+      `Will ${row.tracked_person_name} drink ${Number(row.grand_line)} shots of alcohol?`,
     trackedPersonName: row.tracked_person_name,
     grandLine: Number(row.grand_line),
     grandStartDate: row.grand_start_date,
@@ -419,6 +428,7 @@ async function resetGrandMarketDefaults() {
   const { error } = await supabase
     .from("market_settings")
     .update({
+      grand_market_title: DEFAULT_GRAND_MARKET_TITLE,
       tracked_person_name: DEFAULT_TRACKED_PERSON_NAME,
       grand_line: DEFAULT_GRAND_LINE,
       updated_at: new Date().toISOString(),
@@ -529,7 +539,7 @@ async function removeEvent(event: Event) {
 
   assertNoError(deleteEventError, "Could not delete event.");
 
-  if (event.status === "resolved" && event.actualShots !== undefined) {
+  if (event.status === "resolved" && event.countsTowardGrand && event.actualShots !== undefined) {
     const settings = await fetchSettings();
     const { error: settingsError } = await supabase
       .from("market_settings")
@@ -823,6 +833,9 @@ export function useUpdateSettings() {
       if (data.trackedPersonName !== undefined && !data.trackedPersonName.trim()) {
         fail("Tracked person name is required.");
       }
+      if (data.grandMarketTitle !== undefined && !data.grandMarketTitle.trim()) {
+        fail("Grand market question is required.");
+      }
       if (data.grandLine !== undefined) {
         requirePositiveNumber(data.grandLine, "Grand line");
       }
@@ -837,6 +850,9 @@ export function useUpdateSettings() {
       }
 
       const values = {
+        ...(data.grandMarketTitle !== undefined
+          ? { grand_market_title: data.grandMarketTitle.trim() }
+          : {}),
         ...(data.trackedPersonName !== undefined
           ? { tracked_person_name: data.trackedPersonName.trim() }
           : {}),
@@ -871,7 +887,7 @@ export function useCreateEvent() {
     mutationFn: async ({
       data,
     }: {
-      data: { title: string; eventDate: string; line: number };
+      data: { title: string; eventDate: string; line: number; countsTowardGrand: boolean };
     }) => {
       const profile = await requireAdminProfile();
       if (!data.title.trim()) fail("Event title is required.");
@@ -885,6 +901,7 @@ export function useCreateEvent() {
           event_date: data.eventDate,
           line: data.line,
           status: "active",
+          counts_toward_grand: data.countsTowardGrand,
           created_by: profile.id,
         })
         .select("*")
@@ -937,25 +954,27 @@ export function useResolveEvent() {
 
       assertNoError(updateEventError, "Could not resolve event.");
 
-      const settings = await fetchSettings();
-      const nextTotal = settings.cumulativeShots + data.actualShots;
+      if (event.countsTowardGrand) {
+        const settings = await fetchSettings();
+        const nextTotal = settings.cumulativeShots + data.actualShots;
 
-      const { error: settingsError } = await supabase
-        .from("market_settings")
-        .update({
-          cumulative_shots: nextTotal,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", 1);
+        const { error: settingsError } = await supabase
+          .from("market_settings")
+          .update({
+            cumulative_shots: nextTotal,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", 1);
 
-      assertNoError(settingsError, "Could not update shot count.");
+        assertNoError(settingsError, "Could not update shot count.");
 
-      const { error: historyError } = await supabase.from("shot_history").insert({
-        shot_date: event.eventDate,
-        cumulative_total: nextTotal,
-      });
+        const { error: historyError } = await supabase.from("shot_history").insert({
+          shot_date: event.eventDate,
+          cumulative_total: nextTotal,
+        });
 
-      assertNoError(historyError, "Could not update shot history.");
+        assertNoError(historyError, "Could not update shot history.");
+      }
 
       await settleBets(await fetchBets({ market: "event", eventId }), winningSide);
       return toEvent(updatedEvent as EventRow);

@@ -36,9 +36,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, DollarSign, Eraser, Lock, RotateCcw, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
 
 const authSchema = z.object({ password: z.string().min(1, "Password required") });
 const settingsSchema = z.object({
+  grandMarketTitle: z.string().min(1),
   trackedPersonName: z.string().min(1),
   grandLine: z.coerce.number().min(0.5),
   grandStartDate: z.string().min(1),
@@ -47,7 +49,8 @@ const settingsSchema = z.object({
 const eventSchema = z.object({
   title: z.string().min(1),
   eventDate: z.string().min(1),
-  line: z.coerce.number().min(0.5)
+  line: z.coerce.number().min(0.5),
+  countsTowardGrand: z.boolean()
 });
 const resolveSchema = z.object({ actualShots: z.coerce.number().min(0) });
 
@@ -92,12 +95,18 @@ export default function Admin() {
 
   const settingsForm = useForm<z.infer<typeof settingsSchema>>({
     resolver: zodResolver(settingsSchema),
-    defaultValues: { trackedPersonName: "", grandLine: 100, grandStartDate: "", grandEndDate: "" }
+    defaultValues: {
+      grandMarketTitle: "",
+      trackedPersonName: "",
+      grandLine: 100,
+      grandStartDate: "",
+      grandEndDate: ""
+    }
   });
 
   const eventForm = useForm<z.infer<typeof eventSchema>>({
     resolver: zodResolver(eventSchema),
-    defaultValues: { title: "", eventDate: "", line: 10.5 }
+    defaultValues: { title: "", eventDate: "", line: 10.5, countsTowardGrand: true }
   });
 
   const resolveForm = useForm<z.infer<typeof resolveSchema>>({
@@ -108,6 +117,7 @@ export default function Admin() {
   useEffect(() => {
     if (settings) {
       settingsForm.reset({
+        grandMarketTitle: settings.grandMarketTitle,
         trackedPersonName: settings.trackedPersonName,
         grandLine: settings.grandLine,
         grandStartDate: settings.grandStartDate.split('T')[0],
@@ -140,6 +150,7 @@ export default function Admin() {
           toast({ title: "Settings updated" });
           queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() });
           queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetGrandMarketQueryKey() });
         }
       }
     );
@@ -405,7 +416,7 @@ export default function Admin() {
             <CardContent>
               <Form {...eventForm}>
                 <form onSubmit={eventForm.handleSubmit(onCreateEvent)} className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <FormField control={eventForm.control} name="title" render={({ field }) => (
                       <FormItem><FormLabel>Title</FormLabel><FormControl><Input {...field} placeholder="e.g. Pre-game at John's" /></FormControl></FormItem>
                     )} />
@@ -414,6 +425,14 @@ export default function Admin() {
                     )} />
                     <FormField control={eventForm.control} name="line" render={({ field }) => (
                       <FormItem><FormLabel>O/U Line</FormLabel><FormControl><Input type="number" step="0.5" {...field} /></FormControl></FormItem>
+                    )} />
+                    <FormField control={eventForm.control} name="countsTowardGrand" render={({ field }) => (
+                      <FormItem className="flex min-h-16 flex-row items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+                        <FormLabel className="text-sm font-medium">Counts to Grand</FormLabel>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        </FormControl>
+                      </FormItem>
                     )} />
                   </div>
                   <Button type="submit" disabled={createEvent.isPending}>Create Event</Button>
@@ -449,6 +468,9 @@ export default function Admin() {
                           <div className="font-bold">{event.title}</div>
                           <Badge variant={event.status === "resolved" ? "outline" : event.status === "pending" ? "secondary" : "default"} className="uppercase">
                             {event.status}
+                          </Badge>
+                          <Badge variant={event.countsTowardGrand ? "secondary" : "outline"} className="uppercase">
+                            {event.countsTowardGrand ? "Grand total" : "Side market"}
                           </Badge>
                         </div>
                         <div className="text-sm text-muted-foreground">
@@ -613,6 +635,9 @@ export default function Admin() {
             <CardContent>
               <Form {...settingsForm}>
                 <form onSubmit={settingsForm.handleSubmit(onUpdateSettings)} className="space-y-4">
+                  <FormField control={settingsForm.control} name="grandMarketTitle" render={({ field }) => (
+                    <FormItem><FormLabel>Grand Market Question</FormLabel><FormControl><Input {...field} placeholder="Will Jia Xuan drink 100 shots of alcohol?" /></FormControl></FormItem>
+                  )} />
                   <FormField control={settingsForm.control} name="trackedPersonName" render={({ field }) => (
                     <FormItem><FormLabel>Tracked Person Name</FormLabel><FormControl><Input {...field} /></FormControl></FormItem>
                   )} />

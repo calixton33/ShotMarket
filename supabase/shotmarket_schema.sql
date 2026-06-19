@@ -21,6 +21,7 @@ create table if not exists public.profiles (
 
 create table if not exists public.market_settings (
   id integer primary key default 1 check (id = 1),
+  grand_market_title text not null default 'Will Jia Xuan drink 100 shots of alcohol?',
   tracked_person_name text not null default 'Jia Xuan',
   grand_line numeric(10, 2) not null default 100 check (grand_line > 0),
   grand_start_date timestamptz not null default '2026-06-01 12:00:00+00',
@@ -41,6 +42,7 @@ create table if not exists public.events (
   event_date timestamptz not null,
   line numeric(10, 2) not null check (line > 0),
   status text not null default 'active' check (status in ('active', 'pending', 'resolved')),
+  counts_toward_grand boolean not null default true,
   actual_shots numeric(10, 2) check (actual_shots >= 0),
   winning_side text check (winning_side in ('over', 'under', 'push')),
   created_by uuid references public.profiles(id) on delete set null,
