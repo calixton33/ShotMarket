@@ -146,9 +146,28 @@ export const getGetSettingsQueryKey = () => ["settings"] as const;
 export const getListEventsQueryKey = () => ["events"] as const;
 export const getListUsersQueryKey = () => ["users"] as const;
 
-function getErrorMessage(error: unknown, fallback = "Something went wrong.") {
+function getErrorSearchText(error: unknown) {
   if (typeof error === "string") return error;
   if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object") {
+    return Object.values(error)
+      .filter((value): value is string => typeof value === "string")
+      .join(" ");
+  }
+  return "";
+}
+
+export function getErrorMessage(error: unknown, fallback = "Something went wrong.") {
+  if (typeof error === "string") return error;
+  if (error instanceof Error && error.message) return error.message;
+  if (
+    error &&
+    typeof error === "object" &&
+    "error" in error &&
+    typeof error.error === "string"
+  ) {
+    return error.error;
+  }
   if (
     error &&
     typeof error === "object" &&
@@ -158,6 +177,14 @@ function getErrorMessage(error: unknown, fallback = "Something went wrong.") {
     return error.message;
   }
   return fallback;
+}
+
+function isMissingSchemaColumnError(error: unknown, columnName: string) {
+  const searchText = getErrorSearchText(error).toLowerCase();
+  return (
+    searchText.includes(columnName.toLowerCase()) &&
+    (searchText.includes("schema cache") || searchText.includes("column"))
+  );
 }
 
 function appError(error: unknown, fallback?: string) {
@@ -894,18 +921,35 @@ export function useCreateEvent() {
       requirePositiveNumber(data.line, "Line");
       requireValidDate(data.eventDate, "Event date");
 
-      const { data: event, error } = await supabase
-        .from("events")
-        .insert({
-          title: data.title.trim(),
-          event_date: data.eventDate,
-          line: data.line,
-          status: "active",
-          counts_toward_grand: data.countsTowardGrand,
-          created_by: profile.id,
-        })
-        .select("*")
-        .single();
+      const baseEventValues = {
+        title: data.title.trim(),
+        event_date: data.eventDate,
+        line: data.line,
+        status: "active" as const,
+        created_by: profile.id,
+      };
+
+      const insertEvent = (values: typeof baseEventValues & { counts_toward_grand?: boolean }) =>
+        supabase
+          .from("events")
+          .insert(values)
+          .select("*")
+          .single();
+
+      let { data: event, error } = await insertEvent({
+        ...baseEventValues,
+        counts_toward_grand: data.countsTowardGrand,
+      });
+
+      if (error && isMissingSchemaColumnError(error, "counts_toward_grand")) {
+        if (!data.countsTowardGrand) {
+          fail(
+            "Side-market events require the latest Supabase migration. Run supabase/grand_market_customization_migration.sql, then try again.",
+          );
+        }
+
+        ({ data: event, error } = await insertEvent(baseEventValues));
+      }
 
       assertNoError(error, "Could not create event.");
       return toEvent(event as EventRow);

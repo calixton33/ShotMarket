@@ -19,6 +19,7 @@ import {
   useResetPlayersAndPools,
   useResetPoolsAndBalances,
   getGetSettingsQueryKey,
+  getErrorMessage,
   getGetMeQueryKey,
   getListEventsQueryKey,
   getListUsersQueryKey,
@@ -47,9 +48,9 @@ const settingsSchema = z.object({
   grandEndDate: z.string().min(1)
 });
 const eventSchema = z.object({
-  title: z.string().min(1),
-  eventDate: z.string().min(1),
-  line: z.coerce.number().min(0.5),
+  title: z.string().trim().min(1, "Title is required"),
+  eventDate: z.string().min(1, "Date is required"),
+  line: z.coerce.number().min(0.5, "Line must be at least 0.5"),
   countsTowardGrand: z.boolean()
 });
 const resolveSchema = z.object({ actualShots: z.coerce.number().min(0) });
@@ -166,6 +167,13 @@ export default function Admin() {
           queryClient.invalidateQueries({ queryKey: getListEventsQueryKey() });
           queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() });
           queryClient.invalidateQueries({ queryKey: getGetGrandMarketQueryKey() });
+        },
+        onError: (error) => {
+          toast({
+            title: "Failed to create event",
+            description: getErrorMessage(error, "Could not create event."),
+            variant: "destructive",
+          });
         }
       }
     );
@@ -418,13 +426,25 @@ export default function Admin() {
                 <form onSubmit={eventForm.handleSubmit(onCreateEvent)} className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <FormField control={eventForm.control} name="title" render={({ field }) => (
-                      <FormItem><FormLabel>Title</FormLabel><FormControl><Input {...field} placeholder="e.g. Pre-game at John's" /></FormControl></FormItem>
+                      <FormItem>
+                        <FormLabel>Title</FormLabel>
+                        <FormControl><Input {...field} placeholder="e.g. Pre-game at John's" /></FormControl>
+                        <FormMessage />
+                      </FormItem>
                     )} />
                     <FormField control={eventForm.control} name="eventDate" render={({ field }) => (
-                      <FormItem><FormLabel>Date</FormLabel><FormControl><Input type="date" {...field} /></FormControl></FormItem>
+                      <FormItem>
+                        <FormLabel>Date</FormLabel>
+                        <FormControl><Input type="date" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
                     )} />
                     <FormField control={eventForm.control} name="line" render={({ field }) => (
-                      <FormItem><FormLabel>O/U Line</FormLabel><FormControl><Input type="number" step="0.5" {...field} /></FormControl></FormItem>
+                      <FormItem>
+                        <FormLabel>O/U Line</FormLabel>
+                        <FormControl><Input type="number" step="0.5" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
                     )} />
                     <FormField control={eventForm.control} name="countsTowardGrand" render={({ field }) => (
                       <FormItem className="flex min-h-16 flex-row items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
